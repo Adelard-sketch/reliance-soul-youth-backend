@@ -47,7 +47,7 @@ const transporter = nodemailer.createTransport({
 //----------------------------------------------------
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Connected to MongoDB"))
+  .then(() => console.log("✅ Connected to MongoDB Atlas"))
   .catch((err) => {
     console.error("❌ MongoDB connection failed:", err);
     process.exit(1);
@@ -184,30 +184,20 @@ app.post("/api/book", async (req, res) => {
 //----------------------------------------------------
 // DONATION ENDPOINT
 //----------------------------------------------------
-//----------------------------------------------------
-// DONATION ENDPOINT
-//----------------------------------------------------
 app.post("/api/donate", async (req, res) => {
   try {
     const { amount, email, donorEmail } = req.body;
     const finalEmail = email || donorEmail;
 
-    console.log("Donate request:", req.body);
-
-    if (!amount || !finalEmail) {
+    if (!amount || !finalEmail)
       return res.status(400).json({ error: "Missing amount or email" });
-    }
 
-    // Ensure numeric amount
     const numericAmount = parseFloat(amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
+    if (isNaN(numericAmount) || numericAmount <= 0)
       return res.status(400).json({ error: "Invalid donation amount" });
-    }
 
-    // Convert dollars to cents for Stripe
     const unitAmount = Math.round(numericAmount * 100);
 
-    // Create Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
@@ -226,7 +216,6 @@ app.post("/api/donate", async (req, res) => {
       cancel_url: `${process.env.FRONTEND_URL}/donate?canceled=true`,
     });
 
-    // Save donor in MongoDB
     const donor = new Donor({
       email: finalEmail,
       amount: numericAmount,
@@ -234,14 +223,12 @@ app.post("/api/donate", async (req, res) => {
     });
     await donor.save();
 
-    // Return Stripe session URL
     res.json({ url: session.url });
   } catch (err) {
     console.error("❌ Stripe Donation Error:", err);
     res.status(500).json({ error: "Failed to create donation session" });
   }
 });
-
 
 //----------------------------------------------------
 // CONTACT ENDPOINT
@@ -250,9 +237,8 @@ app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, subject, message } = req.body;
 
-    if (!name || !email || !message) {
+    if (!name || !email || !message)
       return res.status(400).json({ success: false, message: "All fields are required." });
-    }
 
     const newContact = new Contact({ name, email, subject, message });
     await newContact.save();
