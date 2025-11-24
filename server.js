@@ -267,8 +267,13 @@ ${message}
 });
 
 //----------------------------------------------------
-// START SERVER
+// START SERVER (LOCAL) / EXPORT FOR VERCEL
 //----------------------------------------------------
-app.listen(PORT, "0.0.0.0", () =>
-  console.log(`✅ RSYI Server running on port ${PORT}`)
-);
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, "0.0.0.0", () =>
+    console.log(`✅ RSYI Server running on port ${PORT}`)
+  );
+}
+
+// Export for Vercel serverless
+export default app;
