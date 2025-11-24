@@ -45,13 +45,29 @@ const transporter = nodemailer.createTransport({
 //----------------------------------------------------
 // DATABASE CONNECTION
 //----------------------------------------------------
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Connected to MongoDB Atlas"))
-  .catch((err) => {
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) {
+    console.log("✅ Using existing MongoDB connection");
+    return;
+  }
+
+  try {
+    const db = await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    isConnected = db.connections[0].readyState === 1;
+    console.log("✅ Connected to MongoDB Atlas");
+  } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
-    process.exit(1);
-  });
+    throw err;
+  }
+};
+
+// Initialize connection
+connectDB().catch(console.error);
 
 //----------------------------------------------------
 // MIDDLEWARE
@@ -63,7 +79,23 @@ app.use(
   })
 );
 app.use(express.json());
-app.use("/uploads/gallery", express.static(path.join(__dirname, "uploads/gallery")));
+
+// Static files - use /tmp in production
+const uploadsPath = process.env.NODE_ENV === "production" 
+  ? "/tmp/uploads/gallery" 
+  : path.join(__dirname, "uploads/gallery");
+app.use("/uploads/gallery", express.static(uploadsPath));
+
+// Ensure DB connection before handling requests
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error("Database connection error:", err);
+    res.status(503).json({ error: "Database connection failed" });
+  }
+});
 
 //----------------------------------------------------
 // HEALTH CHECK
@@ -73,7 +105,11 @@ app.get("/", (req, res) => res.send("🌍 RSYI Server is running 🚀"));
 //----------------------------------------------------
 // GALLERY ENDPOINTS
 //----------------------------------------------------
-const galleryDir = path.join(__dirname, "uploads/gallery");
+// Use /tmp for Vercel serverless (writable directory)
+const galleryDir = process.env.NODE_ENV === "production" 
+  ? "/tmp/uploads/gallery" 
+  : path.join(__dirname, "uploads/gallery");
+
 if (!fs.existsSync(galleryDir)) fs.mkdirSync(galleryDir, { recursive: true });
 
 const storage = multer.diskStorage({
