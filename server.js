@@ -10,8 +10,8 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
-import { v2 as cloudinary } from 'cloudinary';
-import streamifier from 'streamifier';
+let cloudinary;
+let streamifier;
 import fs from "fs";
 
 import Booking from "./models/Booking.js";
@@ -25,12 +25,7 @@ import Gallery from "./models/Gallery.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
 
-// Cloudinary configuration (for persistent media storage)
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+// Cloudinary will be configured dynamically below if available and configured
 
 // Basic environment validation to avoid runtime crashes
 const requiredEnvs = ['MONGO_URI'];
@@ -39,8 +34,26 @@ if (missing.length) {
   console.warn('Missing required env vars:', missing.join(', '));
 }
 
-const USE_CLOUDINARY = Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+let USE_CLOUDINARY = Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
 if (!USE_CLOUDINARY) console.warn('Cloudinary not fully configured — uploads will be stored locally');
+
+// Dynamically import cloudinary and streamifier only when needed to avoid import errors
+if (USE_CLOUDINARY) {
+  try {
+    const mod = await import('cloudinary');
+    cloudinary = mod.v2 || mod.default?.v2 || mod;
+    const s = await import('streamifier');
+    streamifier = s.default || s;
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+  } catch (err) {
+    console.warn('Cloudinary modules not available in this environment:', err?.message || err);
+    USE_CLOUDINARY = false;
+  }
+}
 
 // Global error handlers to log uncaught errors (prevents silent crashes)
 process.on('unhandledRejection', (reason, p) => {
