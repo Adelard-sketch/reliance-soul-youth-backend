@@ -10,6 +10,8 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import { v2 as cloudinary } from 'cloudinary';
+import streamifier from 'streamifier';
 import fs from "fs";
 
 import Booking from "./models/Booking.js";
@@ -22,6 +24,13 @@ import Gallery from "./models/Gallery.js";
 //----------------------------------------------------
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
+
+// Cloudinary configuration (for persistent media storage)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 //----------------------------------------------------
 // APP & STRIPE CONFIG
@@ -72,9 +81,18 @@ connectDB().catch(console.error);
 //----------------------------------------------------
 // MIDDLEWARE
 //----------------------------------------------------
+// Configure CORS: allow the configured frontend URL, and during development
+// also allow any localhost dev port (helps when Vite picks a different port).
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // allow non-browser requests (curl, server-side)
+      if (origin === frontendUrl) return callback(null, true);
+      // allow localhost with any port during development
+      if (process.env.NODE_ENV !== 'production' && /https?:\/\/localhost:\d+/.test(origin)) return callback(null, true);
+      return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
   })
 );
@@ -112,22 +130,36 @@ const galleryDir = process.env.NODE_ENV === "production"
 
 if (!fs.existsSync(galleryDir)) fs.mkdirSync(galleryDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: galleryDir,
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
-});
+// Use memory storage and upload directly to Cloudinary for persistence
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (adjust as needed)
 });
 
 app.post("/api/admin/gallery/upload", upload.single("media"), async (req, res) => {
   try {
-    const mediaType = req.file.mimetype.startsWith("video") ? "video" : "image";
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const resourceType = req.file.mimetype.startsWith("video") ? 'video' : 'image';
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: 'gallery', resource_type: resourceType },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      );
+      streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+    });
+
+    const mediaType = resourceType;
     const item = new Gallery({
       title: req.body.title,
       caption: req.body.caption,
-      mediaUrl: `/uploads/gallery/${req.file.filename}`,
+      mediaUrl: uploadResult.secure_url,
+      publicId: uploadResult.public_id,
       mediaType,
     });
     await item.save();
@@ -147,9 +179,18 @@ app.delete("/api/admin/gallery/:id", async (req, res) => {
   try {
     const item = await Gallery.findById(req.params.id);
     if (!item) return res.status(404).json({ message: "Not found" });
-
-    const filePath = path.join(__dirname, item.mediaUrl.replace(/^\//, ""));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    // If item was uploaded to Cloudinary, remove it there
+    if (item.publicId) {
+      try {
+        await cloudinary.uploader.destroy(item.publicId, { resource_type: item.mediaType === 'video' ? 'video' : 'image' });
+      } catch (err) {
+        console.error('Cloudinary delete failed:', err);
+      }
+    } else {
+      // fallback: delete local file
+      const filePath = path.join(__dirname, item.mediaUrl.replace(/^\//, ""));
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
 
     await item.deleteOne();
     res.json({ success: true });
@@ -192,6 +233,56 @@ app.delete("/api/admin/bookings/:id", async (req, res) => {
   } catch (err) {
     console.error("❌ Delete booking failed:", err);
     res.status(500).json({ message: "Failed to delete booking" });
+  }
+});
+
+// APPROVE BOOKING - sets status and notifies user
+app.put("/api/admin/bookings/:id/approve", async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { status: "approved", updatedAt: Date.now() },
+      { new: true }
+    );
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    // send approval email
+    await transporter.sendMail({
+      from: `"Reliance Soul Studio" <${process.env.GMAIL_USER}>`,
+      to: booking.email,
+      subject: "Booking Approved — Reliance Soul Studio",
+      text: `Hi ${booking.name},\n\nYour booking for ${booking.category} on ${booking.date} at ${booking.time} has been approved. We look forward to seeing you.\n\nIf you need to reschedule, reply to this email and our team will assist you.\n\n— Reliance Soul Team`,
+    });
+
+    res.json({ success: true, booking });
+  } catch (err) {
+    console.error("❌ Approve booking failed:", err);
+    res.status(500).json({ message: "Failed to approve booking" });
+  }
+});
+
+// REJECT BOOKING - sets status and notifies user
+app.put("/api/admin/bookings/:id/reject", async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { status: "rejected", updatedAt: Date.now() },
+      { new: true }
+    );
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    // send rejection / contact email
+    await transporter.sendMail({
+      from: `"Reliance Soul Studio" <${process.env.GMAIL_USER}>`,
+      to: booking.email,
+      subject: "Booking Update — Reliance Soul Studio",
+      text: `Hi ${booking.name},\n\nThank you for your booking request for ${booking.category} on ${booking.date} at ${booking.time}. At this time our team cannot confirm your requested slot. We will contact you shortly to help reschedule.\n\nIf you prefer, reply to this email and our team will reach out to you.\n\n— Reliance Soul Team`,
+    });
+
+    res.json({ success: true, booking });
+  } catch (err) {
+    console.error("❌ Reject booking failed:", err);
+    res.status(500).json({ message: "Failed to reject booking" });
   }
 });
 

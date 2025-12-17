@@ -5,6 +5,7 @@ const gallerySchema = new mongoose.Schema(
     title: { type: String, required: true },
     caption: { type: String },
     mediaUrl: { type: String, required: true },
+    publicId: { type: String },
     mediaType: { type: String, enum: ["image", "video"], required: true },
   },
   { timestamps: true }
