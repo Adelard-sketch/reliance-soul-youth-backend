@@ -32,6 +32,24 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// Basic environment validation to avoid runtime crashes
+const requiredEnvs = ['MONGO_URI'];
+const missing = requiredEnvs.filter((k) => !process.env[k]);
+if (missing.length) {
+  console.warn('Missing required env vars:', missing.join(', '));
+}
+
+const USE_CLOUDINARY = Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+if (!USE_CLOUDINARY) console.warn('Cloudinary not fully configured — uploads will be stored locally');
+
+// Global error handlers to log uncaught errors (prevents silent crashes)
+process.on('unhandledRejection', (reason, p) => {
+  console.error('Unhandled Rejection at:', p, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
 //----------------------------------------------------
 // APP & STRIPE CONFIG
 //----------------------------------------------------
@@ -130,43 +148,52 @@ const galleryDir = process.env.NODE_ENV === "production"
 
 if (!fs.existsSync(galleryDir)) fs.mkdirSync(galleryDir, { recursive: true });
 
-// Use memory storage and upload directly to Cloudinary for persistence
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max (adjust as needed)
-});
+// Configure multer storage: use memory when uploading to Cloudinary, otherwise disk
+const upload = USE_CLOUDINARY
+  ? multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } })
+  : multer({ storage: multer.diskStorage({ destination: galleryDir, filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname) }), limits: { fileSize: 100 * 1024 * 1024 } });
 
-app.post("/api/admin/gallery/upload", upload.single("media"), async (req, res) => {
+app.post('/api/admin/gallery/upload', upload.single('media'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
 
-    const resourceType = req.file.mimetype.startsWith("video") ? 'video' : 'image';
+    const resourceType = req.file.mimetype && req.file.mimetype.startsWith('video') ? 'video' : 'image';
 
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        { folder: 'gallery', resource_type: resourceType },
-        (error, result) => {
+    if (USE_CLOUDINARY) {
+      // upload via memory stream to Cloudinary
+      const uploadResult = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream({ folder: 'gallery', resource_type: resourceType }, (error, result) => {
           if (error) return reject(error);
           resolve(result);
-        }
-      );
-      streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
-    });
+        });
+        streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+      });
 
-    const mediaType = resourceType;
+      const item = new Gallery({
+        title: req.body.title,
+        caption: req.body.caption,
+        mediaUrl: uploadResult.secure_url,
+        publicId: uploadResult.public_id,
+        mediaType: resourceType,
+      });
+      await item.save();
+      return res.status(201).json(item);
+    }
+
+    // Fallback: save file locally and serve via /uploads/gallery
+    const filename = req.file.filename || (Date.now() + '-' + req.file.originalname);
+    const localUrl = `/uploads/gallery/${filename}`;
     const item = new Gallery({
       title: req.body.title,
       caption: req.body.caption,
-      mediaUrl: uploadResult.secure_url,
-      publicId: uploadResult.public_id,
-      mediaType,
+      mediaUrl: localUrl,
+      mediaType: resourceType,
     });
     await item.save();
-    res.status(201).json(item);
+    return res.status(201).json(item);
   } catch (err) {
-    console.error("❌ Upload failed:", err);
-    res.status(500).json({ message: "Upload failed" });
+    console.error('❌ Upload failed:', err);
+    return res.status(500).json({ message: 'Upload failed', error: err?.message });
   }
 });
 
