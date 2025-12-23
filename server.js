@@ -1,6 +1,4 @@
-//----------------------------------------------------
-// IMPORTS
-//----------------------------------------------------
+//.env
 import express from "express";
 import cors from "cors";
 import Stripe from "stripe";
@@ -19,13 +17,9 @@ import Contact from "./models/Contact.js";
 import Donor from "./models/Donor.js";
 import Gallery from "./models/Gallery.js";
 
-//----------------------------------------------------
-// ENV SETUP
-//----------------------------------------------------
+//.env
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
-
-// Cloudinary will be configured dynamically below if available and configured
 
 // Basic environment validation to avoid runtime crashes
 const requiredEnvs = ['MONGO_URI'];
@@ -63,17 +57,13 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
 });
 
-//----------------------------------------------------
-// APP & STRIPE CONFIG
-//----------------------------------------------------
+//.env
 const app = express();
 const PORT = process.env.PORT || 5000;
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2022-11-15" });
 const MANAGER_EMAIL = process.env.MANAGER_EMAIL || process.env.GMAIL_USER;
 
-//----------------------------------------------------
-// EMAIL SETUP
-//----------------------------------------------------
+//.env
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -82,9 +72,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-//----------------------------------------------------
-// DATABASE CONNECTION
-//----------------------------------------------------
+//.env
 let isConnected = false;
 
 const connectDB = async () => {
@@ -109,9 +97,7 @@ const connectDB = async () => {
 // Initialize connection
 connectDB().catch(console.error);
 
-//----------------------------------------------------
-// MIDDLEWARE
-//----------------------------------------------------
+//.env
 // Configure CORS: allow the configured frontend URL, and during development
 // also allow any localhost dev port (helps when Vite picks a different port).
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -146,14 +132,10 @@ app.use(async (req, res, next) => {
   }
 });
 
-//----------------------------------------------------
-// HEALTH CHECK
-//----------------------------------------------------
+//.env
 app.get("/", (req, res) => res.send("🌍 RSYI Server is running 🚀"));
 
-//----------------------------------------------------
-// GALLERY ENDPOINTS
-//----------------------------------------------------
+//.env
 // Use /tmp for Vercel serverless (writable directory)
 const galleryDir = process.env.NODE_ENV === "production" 
   ? "/tmp/uploads/gallery" 
@@ -240,19 +222,31 @@ app.delete("/api/admin/gallery/:id", async (req, res) => {
   }
 });
 
-//----------------------------------------------------
-// ADMIN LOGIN
-//----------------------------------------------------
+//.env
+// Admin login - supports dev fallback credentials when ADMIN env vars are not set
+function getAdminCredentials() {
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    return { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD };
+  }
+  if (process.env.NODE_ENV !== "production") {
+    const devEmail = process.env.DEV_ADMIN_EMAIL || "admin@localhost";
+    const devPass = process.env.DEV_ADMIN_PASSWORD || "adminpass";
+    console.warn("ADMIN_EMAIL/ADMIN_PASSWORD not set; using dev fallback credentials:", devEmail);
+    return { email: devEmail, password: devPass };
+  }
+  return { email: null, password: null };
+}
+
 app.post("/api/admin/login", (req, res) => {
   const { email, password } = req.body;
-  if (email === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD)
-    res.json({ success: true, token: "secure-admin-token" });
-  else res.status(401).json({ success: false, message: "Invalid credentials." });
+  const creds = getAdminCredentials();
+  if (creds.email && email === creds.email && password === creds.password) {
+    return res.json({ success: true, token: "secure-admin-token" });
+  }
+  return res.status(401).json({ success: false, message: "Invalid credentials." });
 });
 
-//----------------------------------------------------
-// ADMIN DATA ENDPOINTS
-//----------------------------------------------------
+//.env
 app.get("/api/admin/bookings", async (_, res) =>
   res.json(await Booking.find().sort({ createdAt: -1 }))
 );
@@ -263,9 +257,7 @@ app.get("/api/admin/donors", async (_, res) =>
   res.json(await Donor.find().sort({ createdAt: -1 }))
 );
 
-//----------------------------------------------------
-// DELETE BOOKING
-//----------------------------------------------------
+//.env
 app.delete("/api/admin/bookings/:id", async (req, res) => {
   try {
     await Booking.findByIdAndDelete(req.params.id);
@@ -326,9 +318,7 @@ app.put("/api/admin/bookings/:id/reject", async (req, res) => {
   }
 });
 
-//----------------------------------------------------
-// BOOKING ENDPOINT
-//----------------------------------------------------
+//.env
 app.post("/api/book", async (req, res) => {
   try {
     const booking = new Booking(req.body);
@@ -348,9 +338,7 @@ app.post("/api/book", async (req, res) => {
   }
 });
 
-//----------------------------------------------------
-// DONATION ENDPOINT
-//----------------------------------------------------
+//.env
 app.post("/api/donate", async (req, res) => {
   try {
     const { amount, email, donorEmail } = req.body;
@@ -397,9 +385,7 @@ app.post("/api/donate", async (req, res) => {
   }
 });
 
-//----------------------------------------------------
-// CONTACT ENDPOINT
-//----------------------------------------------------
+//.env
 app.post("/api/contact", async (req, res) => {
   try {
     const { name, email, subject, message } = req.body;
@@ -433,9 +419,7 @@ ${message}
   }
 });
 
-//----------------------------------------------------
-// START SERVER (LOCAL) / EXPORT FOR VERCEL
-//----------------------------------------------------
+//.env
 if (process.env.NODE_ENV !== "production") {
   app.listen(PORT, "0.0.0.0", () =>
     console.log(`✅ RSYI Server running on port ${PORT}`)

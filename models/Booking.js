@@ -36,10 +36,11 @@ const bookingSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
-  createdAt: {
-    type: Date,
-    default: Date.now,
+  status: {
+    type: String,
+    enum: ["pending", "approved", "rejected"],
+    default: "pending",
   },
-});
+}, { timestamps: true });
 
 export default mongoose.model("Booking", bookingSchema);

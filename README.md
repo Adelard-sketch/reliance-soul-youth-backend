@@ -36,6 +36,7 @@ Project structure
 
 Notes
 - Media uploads are stored in `uploads/gallery/` by default; Cloudinary can be used for scalable storage.
+	- IMPORTANT: In production the server currently writes local uploads to `/tmp/uploads/gallery` (this is used for serverless platforms like Vercel). `/tmp` is ephemeral — files stored there can be deleted between invocations. For long-term visibility of admin uploads you must enable an external persistent storage provider (Cloudinary, AWS S3, etc.) and set the corresponding env vars. The repo includes optional Cloudinary support via `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`.
 - Stripe webhooks and Checkout are supported; configure `STRIPE_SECRET_KEY` and webhook endpoint as needed.
 
 Deployment
