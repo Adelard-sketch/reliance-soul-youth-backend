@@ -192,6 +192,20 @@ app.post('/api/admin/gallery/upload', upload.single('media'), async (req, res) =
   }
 });
 
+// Cloudinary connectivity health check
+app.get('/api/health/cloudinary', async (req, res) => {
+  if (!USE_CLOUDINARY) return res.status(400).json({ ok: false, message: 'Cloudinary not configured' });
+  try {
+    // Request a small page of resources to validate credentials and reachability
+    const info = await cloudinary.api.resources({ max_results: 1 });
+    const count = Array.isArray(info.resources) ? info.resources.length : 0;
+    return res.json({ ok: true, message: 'Cloudinary reachable', resources: count, total_count: info.total_count });
+  } catch (err) {
+    console.error('Cloudinary health check failed:', err);
+    return res.status(500).json({ ok: false, message: 'Cloudinary connectivity test failed', error: err?.message || String(err) });
+  }
+});
+
 app.get("/api/admin/gallery", async (_, res) => {
   const items = await Gallery.find().sort({ createdAt: -1 });
   res.json(items);
